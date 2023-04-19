@@ -1,10 +1,8 @@
-package chatcompletionstream
+package chatcompletion
 
 import (
 	"context"
 	"errors"
-	"io"
-	"strings"
 
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/virb30/fcexperience/chatservice/internal/domain/entity"
@@ -14,7 +12,6 @@ import (
 type ChatCompletionUseCase struct {
 	ChatGateway  gateway.ChatGateway
 	OpenAiClient *openai.Client
-	Stream       chan ChatCompletionOutputDTO
 }
 
 type ChatCompletionConfigInputDTO struct {
@@ -31,9 +28,9 @@ type ChatCompletionConfigInputDTO struct {
 }
 
 type ChatCompletionInputDTO struct {
-	ChatID      string
-	UserID      string
-	UserMessage string
+	ChatID      string `json:"chat_id"`
+	UserID      string `json:"user_id"`
+	UserMessage string `json:"user_message"`
 	Config      ChatCompletionConfigInputDTO
 }
 
@@ -43,11 +40,10 @@ type ChatCompletionOutputDTO struct {
 	Content string
 }
 
-func NewChatCompletionUseCase(chatGateway gateway.ChatGateway, openAiClient *openai.Client, stream chan ChatCompletionOutputDTO) *ChatCompletionUseCase {
+func NewChatCompletionUseCase(chatGateway gateway.ChatGateway, openAiClient *openai.Client) *ChatCompletionUseCase {
 	return &ChatCompletionUseCase{
 		ChatGateway:  chatGateway,
 		OpenAiClient: openAiClient,
-		Stream:       stream,
 	}
 }
 
@@ -83,7 +79,7 @@ func (uc *ChatCompletionUseCase) Execute(ctx context.Context, input ChatCompleti
 			Content: msg.Content,
 		})
 	}
-	resp, err := uc.OpenAiClient.CreateChatCompletionStream(
+	resp, err := uc.OpenAiClient.CreateChatCompletion(
 		ctx,
 		openai.ChatCompletionRequest{
 			Model:            chat.Config.Model.Name,
@@ -94,33 +90,13 @@ func (uc *ChatCompletionUseCase) Execute(ctx context.Context, input ChatCompleti
 			PresencePenalty:  chat.Config.PresencePenalty,
 			FrequencyPenalty: chat.Config.FrequencyPenalty,
 			Stop:             chat.Config.Stop,
-			Stream:           true,
 		},
 	)
 	if err != nil {
 		return nil, errors.New("error creating chat completion: " + err.Error())
 	}
 
-	var fullResponse strings.Builder
-
-	for {
-		response, err := resp.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, errors.New("error streaming response: " + err.Error())
-		}
-		fullResponse.WriteString(response.Choices[0].Delta.Content)
-		r := ChatCompletionOutputDTO{
-			ChatID:  chat.ID,
-			UserID:  input.UserID,
-			Content: fullResponse.String(),
-		}
-		uc.Stream <- r
-	}
-
-	assistant, err := entity.NewMessage("assistant", fullResponse.String(), chat.Config.Model)
+	assistant, err := entity.NewMessage("assistant", resp.Choices[0].Message.Content, chat.Config.Model)
 	if err != nil {
 		return nil, errors.New("error creating assistant message: " + err.Error())
 	}
@@ -133,12 +109,14 @@ func (uc *ChatCompletionUseCase) Execute(ctx context.Context, input ChatCompleti
 	if err != nil {
 		return nil, errors.New("error saving chat: " + err.Error())
 	}
-	return &ChatCompletionOutputDTO{
+
+	output := &ChatCompletionOutputDTO{
 		ChatID:  chat.ID,
 		UserID:  input.UserID,
-		Content: fullResponse.String(),
-	}, nil
+		Content: resp.Choices[0].Message.Content,
+	}
 
+	return output, nil
 }
 
 func createNewChat(input ChatCompletionInputDTO) (*entity.Chat, error) {
