@@ -1,0 +1,11 @@
+const randomNumbers = Array.from({ length: 20 }, () =>
+        Math.floor(Math.random() * 10)
+    );
+
+    setTimeout(() => {
+        randomNumbers.forEach(number => {
+            writer.write(encoder.encode(`event: message\n`));
+            writer.write(encoder.encode(`id: ${new Date().getTime()}\n`));
+            writer.write(encoder.encode(`data: ${number}\n\n`));
+        })
+    }, 2000);
